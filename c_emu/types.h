@@ -1,6 +1,6 @@
 #pragma once
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef uint8_t u8;
 typedef int8_t i8;
@@ -47,14 +47,14 @@ enum Opcodes {
     Opcode_LDFL = 051,
     Opcode_STFL = 052,
 
-    Opcode_RD   = 071,
-    Opcode_WR   = 072,
+    Opcode_RD = 071,
+    Opcode_WR = 072,
 };
 
 typedef union {
     struct {
-        enum Opcodes opcode : 6;
         u8 reg1 : 2;
+        enum Opcodes opcode : 6;
         union {
             struct {
                 u8 unused;
@@ -67,10 +67,12 @@ typedef union {
                 u8 data;
             } Long;
         };
+    } __attribute__((packed));
+    struct {
+        u8 low;
+        u8 high;
     };
-    u8 high;
-    u8 low;
-} Instruction;
+} __attribute__((packed)) Instruction;
 
 typedef union {
     struct {

@@ -33,7 +33,7 @@
 
 #define JUMP(_addr)                                                            \
     {                                                                          \
-        ProgramPointer = _addr;                                                \
+        program_pointer = _addr;                                               \
         did_jump = true;                                                       \
         break;                                                                 \
     }
