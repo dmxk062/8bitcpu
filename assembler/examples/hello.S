@@ -1,15 +1,14 @@
-; print string from memory (file)
-; to run:
-; - assemble as usual
-; - run with interpreter giving it a file with a string in it as an argument
+.zstr msg "Hello World!\n"
+.bytes buffer 8 'H', 'i', 10, 0
 start:
-    li      r1,     0
-loop:
-    ldr     r0,     r1
-    jiz     r0,     exit
-    wr      r0
-    addi    r1,	    1
-    jmp     loop
+    li      r1, buffer
+    jmp     print
 exit:
-    li      r3,     0b01000000
-    stfl    r3
+    li      r0, 0b01000000
+    stfl    r0
+print:
+    ldr     r0, r1
+    jiz     r0, exit
+    wr      r0
+    addi    r1, 1
+    jmp     print

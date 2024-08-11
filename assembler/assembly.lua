@@ -1,8 +1,12 @@
 local M = {}
 
+M.data_count = 256
+M.code_count = 256
+
 local bit = require("bit")
 local ffi = require("ffi")
 local strbuf = require("string.buffer")
+local parser = require("parser")
 
 ---@alias instkind "none"|"short"|"dual"|"long"
 ---@alias register 0|1|2|3
@@ -85,12 +89,6 @@ local function contains(table, key)
     return false
 end
 
----@param string string
----@param prefix string
----@return boolean
-local function startswith(string, prefix)
-    return string:sub(#prefix) == prefix
-end
 
 
 ---@class instruction
@@ -115,34 +113,16 @@ local function encode(inst)
     return ffi.new("instruction", { data = data, opcode = opcode })
 end
 
----@param line string
----@param endpos integer
----@return string
-local function advance(line, endpos)
-    local new = line:sub(endpos):gsub("^%s+", "")
-    return new
-end
 
----@param line string
----@return integer? reg
----@return integer? endpos
----@return string? error_msg
-local function get_register(line)
-    local r_start, r_end, r_text = line:find("([%w]+)%s?,?")
-    if not r_text then
-        return nil, nil, nil
-    end
-    local r1_num = tonumber(r_text:match("r(%d)"))
-    if not r1_num or r1_num > 3 then
-        return nil, nil, "Invalid register: " .. r_text
-    end
-
-    return r1_num, r_end, nil
-end
+---@class initdata
+---@field size integer
+---@field initial integer[]
+---@field do_init boolean
 
 ---@class synobj
----@field kind "instruction"|"label"
+---@field kind "instruction"|"label"|"data"
 ---@field linenr integer
+---@field static initdata
 ---@field mnemonic string?
 ---@field label string?
 ---@field reg1 register?
@@ -150,11 +130,80 @@ end
 ---@field data integer?
 ---@field datatype "label"|"int"
 
+local function get_str_literal(str)
+    local acc = {}
+    for i = 1, #str do
+        acc[i] = string.byte(str, i)
+    end
+    return acc
+end
+
+M.data_specs = {
+    ---c style string(null terminated)
+    ---@param line string
+    ["zstr"] = function(line)
+        local quoted_string = line:match([["([^"]+)"]]):gsub([[\n]], "\n")
+        if not quoted_string then
+            return nil, nil, "Not a valid string literal: " .. line
+        end
+        local bytes = get_str_literal(quoted_string)
+        table.insert(bytes, 0)
+        return bytes, #bytes
+    end,
+
+    ---byte(s)
+    ---@param line string
+    ["bytes"] = function(line)
+        local size_start, size_end, size_txt = line:find("(%w+)")
+        local parsed_size = parser.parse_integer_literal(size_txt, {0, 256})
+        line = parser.advance(line, size_end+1)
+        if line == "" then
+            return nil, parsed_size
+        end
+        local values = parser.split(line, ",")
+        local numbers = {}
+        for _, value in pairs(values) do
+            table.insert(numbers, parser.parse_integer_literal(value, {0, 256}))
+        end
+
+        return numbers, (parsed_size > #numbers and parsed_size or #numbers)
+    end
+}
+
+---@param line string
+---@return string? label
+---@return initdata?
+---@return string? error_msg
+local function parse_data_line(line)
+    local spec_start, spec_end, spec_txt = line:find("^.([%w]+)")
+    if not contains(M.data_specs, spec_txt) then
+        return nil, nil, "No such data type: " .. spec_txt
+    end
+    line = parser.advance(line, spec_end + 1)
+
+    local label_start, label_end, label_txt = line:find("^([%w_]+)")
+    if not label_txt then
+        return nil, nil, "Missing label in initializer"
+    end
+    line = parser.advance(line, label_end + 1)
+
+    local val, size, error_msg = M.data_specs[spec_txt](line)
+    if not val and error_msg then
+        return nil, nil, error_msg
+    end
+
+    return label_txt, {
+        size = size,
+        initial = val,
+    }
+end
+
+
 ---@param _line string
 ---@return synobj?
 ---@return string? error_msg
 ---@return boolean? skip
-local function parse_line(_line)
+local function parse_code_line(_line)
     -- remove leading indent and comments
     local line = _line:gsub("^%s+", ""):gsub(";.*", "")
     if line == "" then
@@ -162,10 +211,24 @@ local function parse_line(_line)
     end
 
     local label_match = line:match("^([%w_]+):")
+    -- line is a label
     if label_match then
         return {
             label = label_match,
             kind  = "label"
+        }
+    end
+
+    -- line is a data definition
+    if line:sub(1, 1) == "." then
+        local label, val, error_msg = parse_data_line(line)
+        if not label and error_msg then
+            return nil, error_msg, nil
+        end
+        return {
+            kind = "data",
+            label = label,
+            static = val,
         }
     end
 
@@ -179,13 +242,13 @@ local function parse_line(_line)
         return nil, "Unknown mnemonic: " .. mn_text, false
     end
 
-    line = advance(line, mn_end)
+    line = parser.advance(line, mn_end)
     local inst = M.instructions[mn_text]
 
     -- get first register
     local r1, r2, data, datatype = nil, nil, nil, nil
     if not (inst.kind == "none" or (inst.kind == "long" and inst.noreg)) then
-        local r, r1_end, error_msg = get_register(line)
+        local r, r1_end, error_msg = parser.get_register(line)
         if not r then
             if not error_msg then
                 return nil, "Missing r1 for " .. inst.kind .. " " .. mn_text, nil
@@ -193,12 +256,12 @@ local function parse_line(_line)
             return nil, error_msg, nil
         end
         r1 = r
-        line = advance(line, r1_end)
+        line = parser.advance(line, r1_end)
     end
 
     -- get second register
     if inst.kind == "dual" then
-        local r, r2_end, error_msg = get_register(line)
+        local r, r2_end, error_msg = parser.get_register(line)
         if not r then
             if not error_msg then
                 return nil, "Missing r2 for " .. inst.kind .. " " .. mn_text, nil
@@ -206,36 +269,25 @@ local function parse_line(_line)
             return nil, error_msg, nil
         end
         r2 = r
-        line = advance(line, r2_end)
+        line = parser.advance(line, r2_end)
     end
 
     -- get additional data
     if inst.kind == "long" then
-        local param = line:match(",?%s?([%w_]+)$")
+        local param = line:match(",?%s?([%w_']+)$")
         if not param then
             return nil, "Missing param for " .. inst.kind .. " " .. mn_text, nil
         end
-        local val = nil
-        if startswith(param, "0x") or startswith(param, "0b") or startswith(param, "0o") or param:match("%d+") then
-            val = tonumber(param)
-            if not val then
-                return nil, "Invalid numeric constant: " .. param, nil
-            elseif val < 0 or val > 256 then
-                return nil, "Out of range numeric constant: " .. param .. string.format(", 0x%X not in [0x00, 0xFF]", val), nil
-            end
-            datatype = "int"
-            data = val
-        else
-            local charlit = param:match("'(.)'")
-            if charlit then
-                val = string.dump(charlit)
-                data = val
-                datatype = "int"
-            else
-                datatype = "label"
-                data = param
-            end
+        datatype = "int"
+        local val, error_msg = parser.parse_integer_literal(param, { 0, 255 })
+        if not val and error_msg then
+            return nil, error_msg, nil
         end
+        if not val and not error_msg then
+            val = param
+            datatype = "label"
+        end
+        data = val
     end
 
     return {
@@ -248,7 +300,7 @@ local function parse_line(_line)
     }
 end
 
----parse code
+
 ---@param code string
 ---@return synobj? code
 ---@return string? error_msg
@@ -262,7 +314,10 @@ local function parse_code(code)
     local syntax = {}
     for index = 1, #lines do
         local line = lines[index]
-        local syn, error_msg, skip = parse_line(line)
+        if parser.startswith(line, ".data") then
+            break
+        end
+        local syn, error_msg, skip = parse_code_line(line)
         if skip then
         elseif error_msg and not skip then
             return nil, error_msg, index
@@ -270,7 +325,6 @@ local function parse_code(code)
             syn.linenr = index
             table.insert(syntax, syn)
         end
-
     end
 
     return syntax
@@ -278,11 +332,10 @@ end
 
 ---assemble and link code
 ---@param code string
----@param padd boolean
 ---@return string.buffer? machine_code
 ---@return string? error_msg
 ---@return integer? error_line
-function M.assemble(code, padd)
+function M.assemble(code)
     local syns, error_msg, error_line = parse_code(code)
     if not syns or error_msg then
         return nil, error_msg, error_line
@@ -294,6 +347,8 @@ function M.assemble(code, padd)
 
     local labels = {}
     local statements = {}
+    local memory_index = 0
+    local memory_image = ffi.new("uint8_t[?]", M.data_count)
 
     -- link *first*
     for synindex = 1, #syns do
@@ -304,7 +359,14 @@ function M.assemble(code, padd)
                 synindex = synindex + 1
             end
             was_label = true
-        else
+        elseif obj.kind == "data" then
+            if obj.static.initial then
+                local bytearray = ffi.new("uint8_t[?]", obj.static.size, obj.static.initial)
+                ffi.copy(memory_image + memory_index, bytearray, obj.static.size)
+            end
+            symbol_table[obj.label] = memory_index
+            memory_index = memory_index + obj.static.size
+        elseif obj.kind == "instruction" then
             if was_label then
                 for _, label in ipairs(labels) do
                     symbol_table[label] = instr_index
@@ -344,11 +406,11 @@ function M.assemble(code, padd)
         codepoint = codepoint + 1
     end
 
-    local buf = strbuf.new(512)
-    buf:set(machine_code, padd and 512 or codepoint * 2)
+    local buf = strbuf.new(M.code_count * 2 + M.data_count)
+    buf:putcdata(machine_code, M.code_count * 2)
+    buf:putcdata(memory_image, M.data_count)
 
     return buf, nil, nil
-
 end
 
 return M

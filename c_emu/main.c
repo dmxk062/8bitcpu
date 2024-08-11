@@ -150,7 +150,7 @@ void* read_memfile(char* path, size_t size, size_t n) {
     }
     if (st.st_size > size * n) {
         fprintf(stderr, "%s: too large (%ld B > %zu B)", path, st.st_size,
-                size);
+                size * n);
     }
 
     FILE* fl = fopen(path, "r");
@@ -171,29 +171,19 @@ void* read_memfile(char* path, size_t size, size_t n) {
 int main(int argc, char* argv[]) {
     if (argc < 2 || argc > 3) {
         fprintf(stderr,
-                "Usage: %s CODE [MEMORY]\n"
-                "Run CODE on emulated cpu, using MEMORY or all 0s as the "
-                "starting memory\n",
+                "Usage: %s IMAGE\n"
+                "Run IMAGE on emulated cpu\n",
                 argv[0]);
         return 1;
     }
 
-    Instruction* code_mem = read_memfile(argv[1], sizeof(Instruction), PROGMEM_SIZE);
-    if (!code_mem) {
-        return errno;
+    u8* input = read_memfile(argv[1], sizeof(u8), (PROGMEM_SIZE * sizeof(Instruction)) + (DATAMEM_SIZE * sizeof(u8)));
+    if (!input) {
+        return 1;
     }
-    u8* data_mem = NULL;
-    if (argc == 3) {
-        data_mem = read_memfile(argv[2], sizeof(u8), DATAMEM_SIZE);
-        if (!data_mem) {
-            return errno;
-        }
-    } else {
-        data_mem = malloc(DATAMEM_SIZE);
-        if (!data_mem) {
-            return errno;
-        }
-    }
+
+    Instruction* code_mem = (Instruction*)input;
+    u8* data_mem = input + (PROGMEM_SIZE * sizeof(Instruction));
 
     return program_loop(code_mem, data_mem);
 }
