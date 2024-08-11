@@ -56,7 +56,7 @@ function Main(argv)
     end
 
     local code = input:read("*a")
-    local machine_code, errmsg, errline = isa.assemble(code)
+    local machine_code, errmsg, errline = isa.assemble(code, pack)
     if not machine_code or errmsg then
         print(tostring(errline) .. ": " .. errmsg)
         return 1

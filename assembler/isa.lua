@@ -107,7 +107,7 @@ local function encode(inst)
     if inst.kind == "none" or inst.kind == "short" then
         data = 0x00
     elseif inst.kind == "dual" then
-        data = inst.reg2
+        data = lshift(inst.reg2, 6)
     else
         data = inst.data
     end
@@ -128,7 +128,7 @@ end
 ---@return integer? endpos
 ---@return string? error_msg
 local function get_register(line)
-    local r_start, r_end, r_text = line:find("^%s?([%w]+)%s?,?")
+    local r_start, r_end, r_text = line:find("([%w]+)%s?,?")
     if not r_text then
         return nil, nil, nil
     end
@@ -169,7 +169,7 @@ local function parse_line(_line)
         }
     end
 
-    local mn_start, mn_end, mn_text = line:find("^([%w]+)%s?")
+    local mn_start, mn_end, mn_text = line:find("^,?%s?([%w]+)%s?")
     ---@TODO more robust error handling
     if not mn_text then
         return nil, nil, true
@@ -226,8 +226,15 @@ local function parse_line(_line)
             datatype = "int"
             data = val
         else
-            datatype = "label"
-            data = param
+            local charlit = param:match("'(.)'")
+            if charlit then
+                val = string.dump(charlit)
+                data = val
+                datatype = "int"
+            else
+                datatype = "label"
+                data = param
+            end
         end
     end
 
@@ -271,10 +278,11 @@ end
 
 ---assemble and link code
 ---@param code string
+---@param padd boolean
 ---@return string.buffer? machine_code
 ---@return string? error_msg
 ---@return integer? error_line
-function M.assemble(code)
+function M.assemble(code, padd)
     local syns, error_msg, error_line = parse_code(code)
     if not syns or error_msg then
         return nil, error_msg, error_line
@@ -326,7 +334,7 @@ function M.assemble(code)
         end
 
         local instruction = encode {
-            kind = st.kind,
+            kind = M.instructions[st.mnemonic].kind,
             data = data,
             reg1 = st.reg1,
             reg2 = st.reg2,
@@ -336,11 +344,8 @@ function M.assemble(code)
         codepoint = codepoint + 1
     end
 
-    for i = 0, codepoint - 1 do
-        print(machine_code[i].opcode)
-    end
     local buf = strbuf.new(512)
-    buf:putcdata(machine_code, codepoint + 4)
+    buf:set(machine_code, padd and 512 or codepoint * 2)
 
     return buf, nil, nil
 
