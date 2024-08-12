@@ -43,9 +43,12 @@ enum Opcodes {
     Opcode_JII = 045,
     Opcode_JNI = 046,
 
-    // Opcode_LDPR = 050,
+    Opcode_LDPR = 050,
     Opcode_LDFL = 051,
     Opcode_STFL = 052,
+    
+    Opcode_CALL = 061,
+    Opcode_RET  = 062,
 
     Opcode_RD = 071,
     Opcode_WR = 072,
@@ -85,3 +88,8 @@ typedef union {
     };
     u8 flags;
 } CPUFlags;
+
+typedef struct {
+    u8 index;
+    u8 stack[16];
+} Callstack;

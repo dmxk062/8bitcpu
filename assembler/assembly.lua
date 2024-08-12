@@ -63,6 +63,10 @@ M.instructions = {
     ["ldfl"] = { kind = "short", code = 0x29 },
     ["stfl"] = { kind = "short", code = 0x2a },
 
+    -- subroutine calls
+    ["call"] = { kind = "long", code = 0x31, noreg = true },
+    ["ret"]  = { kind = "none", code = 0x32 },
+
     -- I/O
     ["rd"]   = { kind = "short", code = 0x39 },
     ["wr"]   = { kind = "short", code = 0x3a },
@@ -154,18 +158,18 @@ M.data_specs = {
     ---@param line string
     ["bytes"] = function(line)
         local size_start, size_end, size_txt = line:find("(%w+)")
-        local parsed_size, error_msg = parser.parse_integer_literal(size_txt, {0, 255})
+        local parsed_size, error_msg = parser.parse_integer_literal(size_txt, { 0, 255 })
         if not parsed_size and error_msg then
             return nil, nil, error_msg
         end
-        line = parser.advance(line, size_end+1)
+        line = parser.advance(line, size_end + 1)
         if line == "" then
             return nil, parsed_size
         end
         local values = parser.split(line, ",")
         local numbers = {}
         for _, value in pairs(values) do
-            local val, error_msg = parser.parse_integer_literal(value, {0, 255})
+            local val, error_msg = parser.parse_integer_literal(value, { 0, 255 })
             if not val then
                 return nil, nil, error_msg or ("Not a bytes literal: " .. value)
             end
@@ -185,7 +189,7 @@ M.data_specs = {
 
     ---@param line string
     ["byte"] = function(line)
-        local val, error_msg = parser.parse_integer_literal(line, {0, 255})
+        local val, error_msg = parser.parse_integer_literal(line, { 0, 255 })
         if not val and error_msg then
             return nil, nil, error_msg
         end
@@ -383,7 +387,8 @@ function M.assemble(code)
             was_label = true
         elseif obj.kind == "data" then
             if obj.static.size > M.data_count then
-                return nil, string.format("Static object too large: %s (0x%X > 0xFF)", obj.label, obj.static.size), obj.linenr
+                return nil, string.format("Static object too large: %s (0x%X > 0xFF)", obj.label, obj.static.size),
+                    obj.linenr
             end
             if obj.static.size + memory_index > M.data_count then
                 return nil, "Memory overflow: not enough space left", obj.linenr

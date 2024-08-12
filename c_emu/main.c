@@ -16,6 +16,7 @@
 
 #define PROGMEM_SIZE 256
 #define DATAMEM_SIZE 256
+#define CALLSTACK_SIZE 16
 
 volatile CPUFlags* G_Flags;
 
@@ -23,6 +24,7 @@ void interrupt_handler(int signal) { G_Flags->interrupt = true; }
 
 int program_loop(Instruction code[PROGMEM_SIZE], u8 memory[DATAMEM_SIZE]) {
     u8* registers = malloc(4);
+    Callstack* stack = malloc(sizeof(Callstack));
     CPUFlags* flags = malloc(sizeof(CPUFlags));
     if (!memory || !registers || !flags) {
         return 1;
@@ -119,8 +121,32 @@ int program_loop(Instruction code[PROGMEM_SIZE], u8 memory[DATAMEM_SIZE]) {
         case Opcode_JII: OP_DATA(if (flags->interrupt){JUMP(data)})
         case Opcode_JNI: OP_DATA(if (!flags->interrupt){JUMP(data)})
 
+        case Opcode_LDPR: OP_SHORT(registers[reg] = program_pointer)
         case Opcode_LDFL: OP_SHORT(registers[reg] = flags->flags)
         case Opcode_STFL: OP_SHORT(flags->flags = registers[reg])
+
+        case Opcode_CALL: {
+            u8 address = op.Long.data;
+            if (stack->index < CALLSTACK_SIZE) {
+                stack->stack[stack->index++] = program_pointer;
+            } else {
+                for (int i = 1; i < CALLSTACK_SIZE; i++) {
+                    stack->stack[i - 1] = stack->stack[i];
+                }
+                stack->stack[CALLSTACK_SIZE - 1] = program_pointer;
+            }
+            program_pointer = address;
+            did_jump = true;
+            break;
+        }
+
+        case Opcode_RET: {
+            if (stack->index > 0) {
+                program_pointer = stack->stack[--stack->index];
+            }
+            did_jump = false;
+            break;
+        }
 
         case Opcode_WR: OP_SHORT(putchar(registers[reg]));
         case Opcode_RD: OP_SHORT(registers[reg] = getchar())
@@ -133,6 +159,7 @@ int program_loop(Instruction code[PROGMEM_SIZE], u8 memory[DATAMEM_SIZE]) {
         }
     }
     free(flags);
+    free(stack);
     free(registers);
     return 0;
 }
@@ -177,7 +204,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    u8* input = read_memfile(argv[1], sizeof(u8), (PROGMEM_SIZE * sizeof(Instruction)) + (DATAMEM_SIZE * sizeof(u8)));
+    u8* input = read_memfile(argv[1], sizeof(u8),
+                             (PROGMEM_SIZE * sizeof(Instruction)) +
+                                 (DATAMEM_SIZE * sizeof(u8)));
     if (!input) {
         return 1;
     }
