@@ -142,7 +142,7 @@ M.data_specs = {
     ---c style string(null terminated)
     ---@param line string
     ["zstr"] = function(line)
-        local quoted_string = line:match([["([^"]+)"]]):gsub([[\n]], "\n")
+        local quoted_string = line:gsub("\\n", "\n"):match([["([^"]+)"]])
         if not quoted_string then
             return nil, nil, "Not a valid string literal: " .. line
         end
@@ -151,11 +151,13 @@ M.data_specs = {
         return bytes, #bytes
     end,
 
-    ---byte(s)
     ---@param line string
     ["bytes"] = function(line)
         local size_start, size_end, size_txt = line:find("(%w+)")
-        local parsed_size = parser.parse_integer_literal(size_txt, {0, 256})
+        local parsed_size, error_msg = parser.parse_integer_literal(size_txt, {0, 255})
+        if not parsed_size and error_msg then
+            return nil, nil, error_msg
+        end
         line = parser.advance(line, size_end+1)
         if line == "" then
             return nil, parsed_size
@@ -163,10 +165,30 @@ M.data_specs = {
         local values = parser.split(line, ",")
         local numbers = {}
         for _, value in pairs(values) do
-            table.insert(numbers, parser.parse_integer_literal(value, {0, 256}))
+            local val, error_msg = parser.parse_integer_literal(value, {0, 255})
+            if not val then
+                return nil, nil, error_msg or ("Not a bytes literal: " .. value)
+            end
+            table.insert(numbers, val)
+        end
+
+        -- if we get less than count, fill with last element
+        if parsed_size > #numbers then
+            local last = numbers[#numbers]
+            for i = #numbers, parsed_size - 1 do
+                table.insert(numbers, i, last)
+            end
         end
 
         return numbers, (parsed_size > #numbers and parsed_size or #numbers)
+    end,
+
+    ---@param line string
+    ["byte"] = function(line)
+        local val, error_msg = parser.parse_integer_literal(line, {0, 255})
+        if not val and error_msg then
+            return nil, nil, error_msg
+        end
     end
 }
 
@@ -360,6 +382,12 @@ function M.assemble(code)
             end
             was_label = true
         elseif obj.kind == "data" then
+            if obj.static.size > M.data_count then
+                return nil, string.format("Static object too large: %s (0x%X > 0xFF)", obj.label, obj.static.size), obj.linenr
+            end
+            if obj.static.size + memory_index > M.data_count then
+                return nil, "Memory overflow: not enough space left", obj.linenr
+            end
             if obj.static.initial then
                 local bytearray = ffi.new("uint8_t[?]", obj.static.size, obj.static.initial)
                 ffi.copy(memory_image + memory_index, bytearray, obj.static.size)
@@ -382,7 +410,7 @@ function M.assemble(code)
     end
 
     -- assemble, finally
-    local machine_code = ffi.new("instruction[?]", #statements, {})
+    local machine_code = ffi.new("instruction[?]", M.code_count * 2)
     local codepoint = 0
     for i, st in pairs(statements) do
         local data
