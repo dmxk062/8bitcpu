@@ -23,9 +23,9 @@ volatile CPUFlags* G_Flags;
 void interrupt_handler(int signal) { G_Flags->interrupt = true; }
 
 int program_loop(Instruction code[PROGMEM_SIZE], u8 memory[DATAMEM_SIZE]) {
-    u8* registers = malloc(4);
-    Callstack* stack = malloc(sizeof(Callstack));
-    CPUFlags* flags = malloc(sizeof(CPUFlags));
+    u8* registers = calloc(4, sizeof(u8));
+    Callstack* stack = calloc(1, sizeof(Callstack));
+    CPUFlags* flags = calloc(1, sizeof(CPUFlags));
     if (!memory || !registers || !flags) {
         return 1;
     }
