@@ -135,6 +135,7 @@ end
 ---@field datatype "label"|"int"
 
 local function get_str_literal(str)
+    str = str:gsub("\\n", "\n")
     local acc = {}
     for i = 1, #str do
         acc[i] = string.byte(str, i)
@@ -146,12 +147,23 @@ M.data_specs = {
     ---c style string(null terminated)
     ---@param line string
     ["zstr"] = function(line)
-        local quoted_string = line:gsub("\\n", "\n"):match([["([^"]+)"]])
+        local quoted_string = line:match([["([^"]+)"]])
         if not quoted_string then
             return nil, nil, "Not a valid string literal: " .. line
         end
         local bytes = get_str_literal(quoted_string)
         table.insert(bytes, 0)
+        return bytes, #bytes
+    end,
+
+    ---non terminated string
+    ---@param line string
+    ["nstr"] = function(line)
+        local quoted_string = line:match([["([^"]+)"]])
+        if not quoted_string then
+            return nil, nil, "Not a valid string literal: " .. line
+        end
+        local bytes = get_str_literal(quoted_string)
         return bytes, #bytes
     end,
 
@@ -193,6 +205,7 @@ M.data_specs = {
         if not val and error_msg then
             return nil, nil, error_msg
         end
+        return val, 1
     end
 }
 
@@ -231,7 +244,7 @@ end
 ---@return boolean? skip
 local function parse_code_line(_line)
     -- remove leading indent and comments
-    local line = _line:gsub("^%s+", ""):gsub(";.*", "")
+    local line = _line:gsub("^%s+", ""):gsub("#.*", "")
     if line == "" then
         return nil, nil, true
     end
